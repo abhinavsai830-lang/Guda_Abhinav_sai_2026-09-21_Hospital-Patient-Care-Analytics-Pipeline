@@ -526,3 +526,218 @@ def transform_lab_reports(
     )
 
     return df
+
+# ============================================================
+# WEARABLE TRANSFORMATION
+# ============================================================
+
+def transform_wearables(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Clean and transform wearable-device time-series data.
+
+    Transformations:
+        1. Convert reading time
+        2. Convert vital columns to numeric
+        3. Remove duplicate device readings
+        4. Remove physically impossible readings
+        5. Remove incomplete vital rows
+        6. Create abnormal-vital indicators
+    """
+
+    from config import (
+        VALID_VITAL_RANGES,
+        ABNORMAL_VITALS,
+    )
+
+    logger.info(
+        "Starting wearable-data transformation"
+    )
+
+    df = df.copy()
+
+    before_rows = len(df)
+
+    # ========================================================
+    # 1. Convert timestamp
+    # ========================================================
+
+    df["reading_time"] = pd.to_datetime(
+        df["reading_time"],
+        errors="coerce",
+    )
+
+    # ========================================================
+    # 2. Convert vital columns to numeric
+    #
+    # This also protects us if the source later contains
+    # values such as "98.5" instead of 98.5.
+    # ========================================================
+
+    vital_columns = [
+        "heart_rate",
+        "spo2",
+        "body_temp",
+    ]
+
+    for column in vital_columns:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce",
+        )
+
+    # ========================================================
+    # 3. Remove duplicate sensor transmissions
+    #
+    # A device should have at most one reading for a given
+    # timestamp.
+    # ========================================================
+
+    before_duplicates = len(df)
+
+    df = df.drop_duplicates(
+        subset=[
+            "device_id",
+            "reading_time",
+        ]
+    ).copy()
+
+    duplicates_removed = (
+        before_duplicates - len(df)
+    )
+
+    logger.info(
+        "Removed %d duplicate wearable readings",
+        duplicates_removed,
+    )
+
+    # ========================================================
+    # 4. Remove physically impossible readings
+    #
+    # These are sensor/data-quality problems, not necessarily
+    # patient-health problems.
+    # ========================================================
+
+    valid_mask = pd.Series(
+        True,
+        index=df.index,
+    )
+
+    for column, limits in VALID_VITAL_RANGES.items():
+
+        valid_mask &= (
+            df[column].between(
+                limits["low"],
+                limits["high"],
+                inclusive="both",
+            )
+        )
+
+    invalid_physical_count = (
+        (~valid_mask).sum()
+    )
+
+    df = df[
+        valid_mask
+    ].copy()
+
+    logger.info(
+        "Removed %d physically impossible wearable readings",
+        invalid_physical_count,
+    )
+
+    # ========================================================
+    # 5. Remove rows with missing vital measurements
+    # ========================================================
+
+    before_missing_filter = len(df)
+
+    df = df.dropna(
+        subset=vital_columns
+    ).copy()
+
+    missing_vitals_removed = (
+        before_missing_filter - len(df)
+    )
+
+    logger.info(
+        "Removed %d wearable rows with missing vital values",
+        missing_vitals_removed,
+    )
+
+    # ========================================================
+    # 6. Create abnormal heart-rate indicator
+    # ========================================================
+
+    df["heart_rate_abnormal"] = (
+        (
+            df["heart_rate"]
+            > ABNORMAL_VITALS[
+                "heart_rate_high"
+            ]
+        )
+        |
+        (
+            df["heart_rate"]
+            < ABNORMAL_VITALS[
+                "heart_rate_low"
+            ]
+        )
+    ).astype(int)
+
+    # ========================================================
+    # 7. Create abnormal SpO2 indicator
+    # ========================================================
+
+    df["spo2_abnormal"] = (
+        df["spo2"]
+        < ABNORMAL_VITALS[
+            "spo2_low"
+        ]
+    ).astype(int)
+
+    # ========================================================
+    # 8. Create abnormal temperature indicator
+    # ========================================================
+
+    df["body_temp_abnormal"] = (
+        df["body_temp"]
+        > ABNORMAL_VITALS[
+            "body_temp_high"
+        ]
+    ).astype(int)
+
+    # ========================================================
+    # 9. Overall abnormal-vitals flag
+    # ========================================================
+
+    df["is_abnormal"] = (
+        (
+            df["heart_rate_abnormal"]
+            == 1
+        )
+        |
+        (
+            df["spo2_abnormal"]
+            == 1
+        )
+        |
+        (
+            df["body_temp_abnormal"]
+            == 1
+        )
+    ).astype(int)
+
+    logger.info(
+        "Wearable transformation completed: %d rows",
+        len(df),
+    )
+
+    logger.info(
+        "Removed %d total rows",
+        before_rows - len(df),
+    )
+
+    return df
