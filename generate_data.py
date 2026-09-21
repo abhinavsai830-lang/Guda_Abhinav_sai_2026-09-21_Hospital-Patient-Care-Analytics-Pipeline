@@ -951,7 +951,257 @@ def generate_lab_reports(
         )
 
     return reports
+# ============================================================
+# WEARABLE DEVICE GENERATOR
+# ============================================================
 
+def generate_wearables(
+    patients: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Generate synthetic wearable-device time-series data.
+
+    Each monitored patient receives hourly readings for
+    three days.
+
+    Intentional data-quality issues:
+    - impossible heart rates
+    - missing SpO2 values
+    - impossible temperature values
+    - duplicate transmissions
+    """
+
+    # --------------------------------------------------------
+    # Only some patients use wearable devices.
+    # --------------------------------------------------------
+
+    monitored_patients = patients.drop_duplicates(
+        "patient_id"
+    ).sample(
+        n=60,
+        random_state=7,
+    )
+
+    rows = []
+
+    # --------------------------------------------------------
+    # Generate 72 hourly readings.
+    # --------------------------------------------------------
+
+    for _, patient in monitored_patients.iterrows():
+
+        patient_id = patient["patient_id"]
+
+        device_id = f"W-{patient_id}"
+
+        chronic_condition = (
+            patient["chronic_condition"]
+            if pd.notna(
+                patient["chronic_condition"]
+            )
+            else "None"
+        )
+
+        # Patients with cardiac/respiratory conditions
+        # receive slightly different synthetic distributions.
+
+        high_risk_group = chronic_condition in {
+            "Heart Disease",
+            "Hypertension",
+            "Asthma",
+        }
+
+        for hour in range(72):
+
+            reading_time = (
+                START_DATE
+                + pd.Timedelta(
+                    days=30,
+                    hours=hour,
+                )
+            )
+
+            # ------------------------------------------------
+            # Heart rate
+            # ------------------------------------------------
+
+            if high_risk_group:
+
+                heart_rate = RNG.normal(
+                    loc=95,
+                    scale=14,
+                )
+
+            else:
+
+                heart_rate = RNG.normal(
+                    loc=76,
+                    scale=8,
+                )
+
+            heart_rate = round(
+                float(heart_rate)
+            )
+
+            # ------------------------------------------------
+            # SpO2
+            # ------------------------------------------------
+
+            if high_risk_group:
+
+                spo2 = RNG.normal(
+                    loc=93,
+                    scale=2.2,
+                )
+
+            else:
+
+                spo2 = RNG.normal(
+                    loc=97.5,
+                    scale=1,
+                )
+
+            spo2 = round(
+                float(
+                    min(
+                        spo2,
+                        100,
+                    )
+                ),
+                1,
+            )
+
+            # ------------------------------------------------
+            # Body temperature
+            # ------------------------------------------------
+
+            if high_risk_group:
+
+                body_temp = RNG.normal(
+                    loc=37.1,
+                    scale=0.5,
+                )
+
+            else:
+
+                body_temp = RNG.normal(
+                    loc=36.7,
+                    scale=0.3,
+                )
+
+            body_temp = round(
+                float(body_temp),
+                1,
+            )
+
+            rows.append(
+                [
+                    patient_id,
+                    device_id,
+                    reading_time,
+                    heart_rate,
+                    spo2,
+                    body_temp,
+                ]
+            )
+
+    # --------------------------------------------------------
+    # Create DataFrame
+    # --------------------------------------------------------
+
+    wearables = pd.DataFrame(
+        rows,
+        columns=[
+            "patient_id",
+            "device_id",
+            "reading_time",
+            "heart_rate",
+            "spo2",
+            "body_temp",
+        ],
+    )
+
+    # ========================================================
+    # INTENTIONAL SENSOR ERRORS
+    # ========================================================
+
+    # --------------------------------------------------------
+    # Select rows where sensor glitches will be introduced.
+    # --------------------------------------------------------
+
+    error_indices = RNG.choice(
+        len(wearables),
+        size=60,
+        replace=False,
+    )
+
+    # --------------------------------------------------------
+    # 20 readings → heart rate = 0
+    # --------------------------------------------------------
+
+    wearables.loc[
+        error_indices[:20],
+        "heart_rate",
+    ] = 0
+
+    # --------------------------------------------------------
+    # 15 readings → heart rate = 300
+    # --------------------------------------------------------
+
+    wearables.loc[
+        error_indices[20:35],
+        "heart_rate",
+    ] = 300
+
+    # --------------------------------------------------------
+    # 15 readings → missing SpO2
+    # --------------------------------------------------------
+
+    wearables.loc[
+        error_indices[35:50],
+        "spo2",
+    ] = np.nan
+
+    # --------------------------------------------------------
+    # 10 readings → impossible temperature
+    # --------------------------------------------------------
+
+    wearables.loc[
+        error_indices[50:],
+        "body_temp",
+    ] = 0.0
+
+    # ========================================================
+    # DUPLICATE TRANSMISSIONS
+    # ========================================================
+
+    duplicate_rows = wearables.sample(
+        n=40,
+        random_state=2,
+    )
+
+    wearables = pd.concat(
+        [
+            wearables,
+            duplicate_rows,
+        ],
+        ignore_index=True,
+    )
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
+    output_path = SOURCE_FILES[
+        "wearables"
+    ]
+
+    wearables.to_csv(
+        output_path,
+        index=False,
+    )
+
+    return wearables
 # ============================================================
 # MAIN
 # ============================================================
@@ -1065,7 +1315,58 @@ def main() -> None:
             patients['patient_id']
         )).sum()}"
     )
+        # --------------------------------------------------------
+    # Generate wearable-device data
+    # --------------------------------------------------------
 
+    wearables = generate_wearables(
+        patients
+    )
+
+    print()
+    print("WEARABLE HEALTH DEVICES")
+    print("-" * 60)
+
+    print(
+        f"Raw readings       : {len(wearables)}"
+    )
+
+    print(
+        f"Unique devices     : "
+        f"{wearables['device_id'].nunique()}"
+    )
+
+    print(
+        f"Duplicate readings : "
+        f"{wearables.duplicated(
+            ['device_id', 'reading_time']
+        ).sum()}"
+    )
+
+    print(
+        f"Heart rate = 0    : "
+        f"{(wearables['heart_rate'] == 0).sum()}"
+    )
+
+    print(
+        f"Heart rate = 300  : "
+        f"{(wearables['heart_rate'] == 300).sum()}"
+    )
+
+    print(
+        f"Missing SpO2      : "
+        f"{wearables['spo2'].isna().sum()}"
+    )
+
+    print(
+        f"Invalid temperature: "
+        f"{(wearables['body_temp'] == 0).sum()}"
+    )
+
+    print(
+        f"Saved to           : "
+        f"{SOURCE_FILES['wearables']}"
+    )
     # --------------------------------------------------------
     # Calculate intentionally invalid waiting records
     # --------------------------------------------------------
