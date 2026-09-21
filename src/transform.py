@@ -210,6 +210,7 @@ def transform_patients(
 # ============================================================
 
 def transform_appointments(
+        
     df: pd.DataFrame,
     valid_patient_ids: set[str],
 ) -> pd.DataFrame:
@@ -379,6 +380,148 @@ def transform_appointments(
 
     logger.info(
         "Appointment transformation completed: %d rows",
+        len(df),
+    )
+
+    return df
+
+# ============================================================
+# LABORATORY TRANSFORMATION
+# ============================================================
+
+def transform_lab_reports(
+    df: pd.DataFrame,
+    valid_patient_ids: set[str],
+) -> pd.DataFrame:
+    """
+    Clean and transform laboratory reports.
+
+    Transformations:
+        1. Convert result values to numeric
+        2. Remove missing/invalid results
+        3. Remove records for unknown patients
+        4. Convert report dates
+        5. Add reference ranges
+        6. Classify results as Low / Normal / High
+        7. Create abnormal-result indicator
+    """
+
+    from config import LAB_REFERENCE_RANGES
+
+    logger.info(
+        "Starting laboratory transformation"
+    )
+
+    df = df.copy()
+
+    # ========================================================
+    # 1. Convert result values to numeric
+    # ========================================================
+
+    df["result_value"] = pd.to_numeric(
+        df["result_value"],
+        errors="coerce",
+    )
+
+    # ========================================================
+    # 2. Remove missing/invalid results
+    # ========================================================
+
+    before_result_filter = len(df)
+
+    df = df[
+        df["result_value"].notna()
+    ].copy()
+
+    removed_invalid_results = (
+        before_result_filter - len(df)
+    )
+
+    logger.info(
+        "Removed %d lab records with missing/invalid results",
+        removed_invalid_results,
+    )
+
+    # ========================================================
+    # 3. Referential integrity
+    # ========================================================
+
+    before_patient_filter = len(df)
+
+    df = df[
+        df["patient_id"].isin(
+            valid_patient_ids
+        )
+    ].copy()
+
+    removed_unknown_patients = (
+        before_patient_filter - len(df)
+    )
+
+    logger.info(
+        "Removed %d lab records with unknown patients",
+        removed_unknown_patients,
+    )
+
+    # ========================================================
+    # 4. Convert report date
+    # ========================================================
+
+    df["report_date"] = pd.to_datetime(
+        df["report_date"],
+        errors="coerce",
+    )
+
+    # ========================================================
+    # 5. Add reference ranges
+    # ========================================================
+
+    df["ref_low"] = (
+        df["test_name"]
+        .map(
+            lambda test_name:
+                LAB_REFERENCE_RANGES[
+                    test_name
+                ]["low"]
+        )
+    )
+
+    df["ref_high"] = (
+        df["test_name"]
+        .map(
+            lambda test_name:
+                LAB_REFERENCE_RANGES[
+                    test_name
+                ]["high"]
+        )
+    )
+
+    # ========================================================
+    # 6. Classify the result
+    # ========================================================
+
+    df["result_status"] = "Normal"
+
+    df.loc[
+        df["result_value"] < df["ref_low"],
+        "result_status",
+    ] = "Low"
+
+    df.loc[
+        df["result_value"] > df["ref_high"],
+        "result_status",
+    ] = "High"
+
+    # ========================================================
+    # 7. Create abnormal flag
+    # ========================================================
+
+    df["is_abnormal"] = (
+        df["result_status"] != "Normal"
+    ).astype(int)
+
+    logger.info(
+        "Laboratory transformation completed: %d rows",
         len(df),
     )
 
