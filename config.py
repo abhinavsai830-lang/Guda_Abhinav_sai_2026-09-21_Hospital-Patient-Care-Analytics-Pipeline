@@ -65,3 +65,34 @@ SOURCE_FILES = {
         "doctor_notes.csv"
     ),
 }
+# ============================================================
+# LABORATORY REFERENCE RANGES
+# ============================================================
+
+LAB_REFERENCE_RANGES = {
+    "Hemoglobin": {
+        "low": 12.0,
+        "high": 17.5,
+        "unit": "g/dL",
+    },
+    "Fasting Blood Sugar": {
+        "low": 70.0,
+        "high": 100.0,
+        "unit": "mg/dL",
+    },
+    "Total Cholesterol": {
+        "low": 0.0,
+        "high": 200.0,
+        "unit": "mg/dL",
+    },
+    "Creatinine": {
+        "low": 0.6,
+        "high": 1.3,
+        "unit": "mg/dL",
+    },
+    "WBC Count": {
+        "low": 4.0,
+        "high": 11.0,
+        "unit": "10^3/uL",
+    },
+}

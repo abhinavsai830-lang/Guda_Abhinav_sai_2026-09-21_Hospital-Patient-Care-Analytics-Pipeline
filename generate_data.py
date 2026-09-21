@@ -714,7 +714,243 @@ def generate_appointments(
     )
 
     return appointments
+# ============================================================
+# LABORATORY REPORT GENERATOR
+# ============================================================
 
+def generate_lab_reports(
+    patients: pd.DataFrame,
+) -> list[dict]:
+    """
+    Generate synthetic laboratory reports in JSON format.
+
+    Each patient can have multiple laboratory tests.
+
+    Intentional raw-data issues:
+    - missing results
+    - numeric values stored as strings
+    - abnormal results associated with chronic conditions
+    """
+
+    # --------------------------------------------------------
+    # Base distributions for normal patients
+    #
+    # (mean, standard deviation, unit)
+    # --------------------------------------------------------
+
+    normal_ranges = {
+        "Hemoglobin": (
+            14.0,
+            1.5,
+            "g/dL",
+        ),
+
+        "Fasting Blood Sugar": (
+            90.0,
+            8.0,
+            "mg/dL",
+        ),
+
+        "Total Cholesterol": (
+            175.0,
+            20.0,
+            "mg/dL",
+        ),
+
+        "Creatinine": (
+            0.95,
+            0.15,
+            "mg/dL",
+        ),
+
+        "WBC Count": (
+            7.5,
+            1.5,
+            "10^3/uL",
+        ),
+    }
+
+    # --------------------------------------------------------
+    # Chronic-condition shifts
+    #
+    # This makes the synthetic dataset more realistic.
+    # --------------------------------------------------------
+
+    condition_shifts = {
+        "Diabetes": {
+            "Fasting Blood Sugar": 60,
+        },
+
+        "Heart Disease": {
+            "Total Cholesterol": 60,
+        },
+
+        "Hypertension": {
+            "Total Cholesterol": 35,
+        },
+
+        "Kidney Disease": {
+            "Creatinine": 1.2,
+        },
+    }
+
+    reports = []
+
+    report_number = 1
+
+    # --------------------------------------------------------
+    # Generate tests for each patient
+    # --------------------------------------------------------
+
+    for _, patient in patients.drop_duplicates(
+        "patient_id"
+    ).iterrows():
+
+        patient_id = patient["patient_id"]
+
+        chronic_condition = (
+            patient["chronic_condition"]
+            if pd.notna(
+                patient["chronic_condition"]
+            )
+            else "None"
+        )
+
+        for test_name, (
+            mean,
+            std,
+            unit,
+        ) in normal_ranges.items():
+
+            # ------------------------------------------------
+            # Not every patient gets every test.
+            #
+            # This creates realistic sparsity.
+            # ------------------------------------------------
+
+            if RNG.random() < 0.30:
+                continue
+
+            # ------------------------------------------------
+            # Apply chronic-condition shift
+            # ------------------------------------------------
+
+            shift = (
+                condition_shifts
+                .get(
+                    chronic_condition,
+                    {},
+                )
+                .get(
+                    test_name,
+                    0,
+                )
+            )
+
+            value = RNG.normal(
+                mean + shift,
+                std,
+            )
+
+            value = round(
+                float(value),
+                2,
+            )
+
+            # ------------------------------------------------
+            # Occasionally create a missing lab result
+            # ------------------------------------------------
+
+            if RNG.random() < 0.03:
+
+                value = None
+
+            # ------------------------------------------------
+            # Occasionally store numeric value as string
+            # ------------------------------------------------
+
+            elif RNG.random() < 0.15:
+
+                value = str(value)
+
+            # ------------------------------------------------
+            # Random report date
+            # ------------------------------------------------
+
+            report_date = (
+                START_DATE
+                + pd.Timedelta(
+                    days=int(
+                        RNG.integers(
+                            low=0,
+                            high=45,
+                        )
+                    )
+                )
+            )
+
+            reports.append(
+                {
+                    "report_id": (
+                        f"L{report_number:05d}"
+                    ),
+
+                    "patient_id": patient_id,
+
+                    "test_name": test_name,
+
+                    "result_value": value,
+
+                    "unit": unit,
+
+                    "report_date": str(
+                        report_date.date()
+                    ),
+                }
+            )
+
+            report_number += 1
+
+    # --------------------------------------------------------
+    # JSON output structure
+    # --------------------------------------------------------
+
+    lab_data = {
+        "source": "hospital_lab_system",
+        "generated_at": str(
+            pd.Timestamp.now()
+        ),
+        "reports": reports,
+    }
+
+    # --------------------------------------------------------
+    # Save JSON
+    # --------------------------------------------------------
+
+    os.makedirs(
+        RAW_DIR,
+        exist_ok=True,
+    )
+
+    output_path = SOURCE_FILES[
+        "lab_reports"
+    ]
+
+    import json
+
+    with open(
+        output_path,
+        "w",
+        encoding="utf-8",
+    ) as file:
+
+        json.dump(
+            lab_data,
+            file,
+            indent=2,
+        )
+
+    return reports
 
 # ============================================================
 # MAIN
@@ -761,7 +997,45 @@ def main() -> None:
     appointments = generate_appointments(
         patients
     )
+        # --------------------------------------------------------
+    # Generate laboratory reports
+    # --------------------------------------------------------
 
+    lab_reports = generate_lab_reports(
+        patients
+    )
+
+    print()
+    print("LABORATORY SYSTEM")
+    print("-" * 60)
+
+    print(
+        f"Lab reports        : {len(lab_reports)}"
+    )
+
+    print(
+        f"Missing results    : "
+        f"{sum(
+            report['result_value'] is None
+            for report in lab_reports
+        )}"
+    )
+
+    print(
+        f"String results     : "
+        f"{sum(
+            isinstance(
+                report['result_value'],
+                str,
+            )
+            for report in lab_reports
+        )}"
+    )
+
+    print(
+        f"Saved to           : "
+        f"{SOURCE_FILES['lab_reports']}"
+    )
     print()
     print("APPOINTMENT SYSTEM")
     print("-" * 60)
