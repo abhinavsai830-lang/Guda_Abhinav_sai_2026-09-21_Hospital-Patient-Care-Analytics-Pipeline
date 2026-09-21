@@ -30,8 +30,14 @@ RNG = np.random.default_rng(42)
 # ============================================================
 
 N_PATIENTS = 200
+N_APPOINTMENTS = 1200
 
 START_DATE = pd.Timestamp("2026-08-01")
+
+
+# ============================================================
+# PATIENT DATA
+# ============================================================
 
 FIRST_NAMES = [
     "Ravi",
@@ -98,6 +104,36 @@ CHRONIC_CONDITIONS = [
 
 
 # ============================================================
+# HOSPITAL STRUCTURE
+# ============================================================
+
+DEPARTMENTS = {
+    "Cardiology": [
+        "D01",
+        "D02",
+    ],
+    "General Medicine": [
+        "D03",
+        "D04",
+        "D05",
+    ],
+    "Orthopedics": [
+        "D06",
+        "D07",
+    ],
+    "Pediatrics": [
+        "D08",
+    ],
+    "Neurology": [
+        "D09",
+    ],
+    "Pulmonology": [
+        "D10",
+    ],
+}
+
+
+# ============================================================
 # PATIENT GENERATOR
 # ============================================================
 
@@ -115,7 +151,7 @@ def generate_patients() -> pd.DataFrame:
     ]
 
     # --------------------------------------------------------
-    # Generate realistic ages
+    # Generate ages
     # --------------------------------------------------------
 
     ages = RNG.integers(
@@ -125,7 +161,7 @@ def generate_patients() -> pd.DataFrame:
     )
 
     # --------------------------------------------------------
-    # Generate date of birth from age
+    # Generate dates of birth
     # --------------------------------------------------------
 
     date_of_birth = []
@@ -141,8 +177,12 @@ def generate_patients() -> pd.DataFrame:
 
         dob = (
             START_DATE
-            - pd.DateOffset(years=int(age))
-            - pd.Timedelta(days=random_days)
+            - pd.DateOffset(
+                years=int(age)
+            )
+            - pd.Timedelta(
+                days=random_days
+            )
         )
 
         date_of_birth.append(
@@ -151,21 +191,23 @@ def generate_patients() -> pd.DataFrame:
 
     # --------------------------------------------------------
     # Generate names
-    #
-    # We intentionally add spaces around some names.
-    # This becomes a transformation problem later.
     # --------------------------------------------------------
 
     names = []
 
     for _ in patient_ids:
 
-        first_name = RNG.choice(FIRST_NAMES)
-        last_name = RNG.choice(LAST_NAMES)
+        first_name = RNG.choice(
+            FIRST_NAMES
+        )
+
+        last_name = RNG.choice(
+            LAST_NAMES
+        )
 
         name = f"{first_name} {last_name}"
 
-        # 20% of records contain extra spaces
+        # 20% contain extra spaces
         if RNG.random() < 0.20:
             name = f" {name} "
 
@@ -173,9 +215,6 @@ def generate_patients() -> pd.DataFrame:
 
     # --------------------------------------------------------
     # Generate inconsistent gender values
-    #
-    # Example:
-    # M, Male, male, F, Female, female
     # --------------------------------------------------------
 
     genders = RNG.choice(
@@ -210,9 +249,6 @@ def generate_patients() -> pd.DataFrame:
 
     # --------------------------------------------------------
     # Generate chronic conditions
-    #
-    # Younger patients mostly receive "None".
-    # Older patients have a higher chance of chronic disease.
     # --------------------------------------------------------
 
     chronic_conditions = []
@@ -237,21 +273,21 @@ def generate_patients() -> pd.DataFrame:
             condition = RNG.choice(
                 CHRONIC_CONDITIONS,
                 p=[
-                    0.45,  # None
-                    0.15,  # Diabetes
-                    0.15,  # Hypertension
-                    0.10,  # Heart Disease
-                    0.08,  # Asthma
-                    0.07,  # Kidney Disease
+                    0.45,
+                    0.15,
+                    0.15,
+                    0.10,
+                    0.08,
+                    0.07,
                 ],
             )
 
-        chronic_conditions.append(condition)
+        chronic_conditions.append(
+            condition
+        )
 
     # --------------------------------------------------------
-    # Registration dates
-    #
-    # Each patient registered some time before START_DATE.
+    # Generate registration dates
     # --------------------------------------------------------
 
     registration_dates = []
@@ -277,7 +313,7 @@ def generate_patients() -> pd.DataFrame:
         )
 
     # --------------------------------------------------------
-    # Create DataFrame
+    # Build DataFrame
     # --------------------------------------------------------
 
     patients = pd.DataFrame(
@@ -298,7 +334,7 @@ def generate_patients() -> pd.DataFrame:
     # ========================================================
 
     # --------------------------------------------------------
-    # 1. Missing blood groups
+    # Missing blood groups
     # --------------------------------------------------------
 
     missing_blood_group_indices = RNG.choice(
@@ -313,7 +349,7 @@ def generate_patients() -> pd.DataFrame:
     ] = np.nan
 
     # --------------------------------------------------------
-    # 2. Missing cities
+    # Missing cities
     # --------------------------------------------------------
 
     missing_city_indices = RNG.choice(
@@ -328,10 +364,7 @@ def generate_patients() -> pd.DataFrame:
     ] = np.nan
 
     # --------------------------------------------------------
-    # 3. Store "None" chronic condition as missing.
-    #
-    # This simulates a source system that leaves the field
-    # blank when the patient has no chronic condition.
+    # Represent "None" as missing in raw source
     # --------------------------------------------------------
 
     patients.loc[
@@ -340,10 +373,7 @@ def generate_patients() -> pd.DataFrame:
     ] = np.nan
 
     # --------------------------------------------------------
-    # 4. Duplicate patient registrations
-    #
-    # We duplicate six existing rows.
-    # The Transform phase will remove them using patient_id.
+    # Duplicate patient registrations
     # --------------------------------------------------------
 
     duplicate_rows = patients.sample(
@@ -360,7 +390,7 @@ def generate_patients() -> pd.DataFrame:
     )
 
     # --------------------------------------------------------
-    # Save raw data
+    # Save
     # --------------------------------------------------------
 
     os.makedirs(
@@ -379,59 +409,416 @@ def generate_patients() -> pd.DataFrame:
 
 
 # ============================================================
+# APPOINTMENT GENERATOR
+# ============================================================
+
+def generate_appointments(
+    patients: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Generate synthetic appointment-scheduling data.
+
+    The data contains:
+    - completed appointments
+    - no-shows
+    - cancellations
+    - realistic waiting times
+    - intentionally invalid records
+    - unknown patient IDs
+    """
+
+    # --------------------------------------------------------
+    # Use unique patient IDs.
+    #
+    # The patient source contains duplicate registrations,
+    # but the appointment system should normally reference
+    # logical patients.
+    # --------------------------------------------------------
+
+    valid_patient_ids = (
+        patients["patient_id"]
+        .drop_duplicates()
+        .tolist()
+    )
+
+    rows = []
+
+    # --------------------------------------------------------
+    # Generate appointments
+    # --------------------------------------------------------
+
+    for i in range(
+        1,
+        N_APPOINTMENTS + 1,
+    ):
+
+        # Pick department
+        department = RNG.choice(
+            list(DEPARTMENTS.keys())
+        )
+
+        # Pick doctor from department
+        doctor_id = RNG.choice(
+            DEPARTMENTS[department]
+        )
+
+        # Pick patient
+        patient_id = RNG.choice(
+            valid_patient_ids
+        )
+
+        # Random appointment day
+        day_offset = int(
+            RNG.integers(
+                low=0,
+                high=45,
+            )
+        )
+
+        appointment_day = (
+            START_DATE
+            + pd.Timedelta(
+                days=day_offset
+            )
+        )
+
+        # ----------------------------------------------------
+        # Hospital appointment hours
+        # ----------------------------------------------------
+
+        hour = int(
+            RNG.choice(
+                [
+                    9,
+                    10,
+                    11,
+                    12,
+                    13,
+                    14,
+                    15,
+                    16,
+                ],
+                p=[
+                    0.12,
+                    0.20,
+                    0.20,
+                    0.15,
+                    0.08,
+                    0.10,
+                    0.08,
+                    0.07,
+                ],
+            )
+        )
+
+        minute = int(
+            RNG.choice(
+                [
+                    0,
+                    15,
+                    30,
+                    45,
+                ]
+            )
+        )
+
+        scheduled_time = (
+            appointment_day
+            + pd.Timedelta(
+                hours=hour,
+                minutes=minute,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Appointment status
+        # ----------------------------------------------------
+
+        status = RNG.choice(
+            [
+                "Completed",
+                "No-Show",
+                "Cancelled",
+            ],
+            p=[
+                0.82,
+                0.12,
+                0.06,
+            ],
+        )
+
+        checkin_time = pd.NaT
+        consultation_start_time = pd.NaT
+
+        # ----------------------------------------------------
+        # Completed appointment
+        # ----------------------------------------------------
+
+        if status == "Completed":
+
+            # Patient checks in slightly before or after
+            # the scheduled time.
+
+            checkin_offset = int(
+                RNG.integers(
+                    low=-15,
+                    high=10,
+                )
+            )
+
+            checkin_time = (
+                scheduled_time
+                + pd.Timedelta(
+                    minutes=checkin_offset
+                )
+            )
+
+            # Base consultation waiting time
+            base_wait_by_department = {
+                "Cardiology": 35,
+                "General Medicine": 45,
+                "Orthopedics": 30,
+                "Pediatrics": 20,
+                "Neurology": 25,
+                "Pulmonology": 25,
+            }
+
+            base_wait = (
+                base_wait_by_department[
+                    department
+                ]
+            )
+
+            # Morning rush
+            peak_wait = (
+                20
+                if hour in (10, 11)
+                else 0
+            )
+
+            waiting_time = max(
+                2,
+                int(
+                    RNG.normal(
+                        base_wait + peak_wait,
+                        12,
+                    )
+                ),
+            )
+
+            consultation_start_time = (
+                checkin_time
+                + pd.Timedelta(
+                    minutes=waiting_time
+                )
+            )
+
+        rows.append(
+            [
+                f"A{i:05d}",
+                patient_id,
+                doctor_id,
+                department,
+                scheduled_time,
+                checkin_time,
+                consultation_start_time,
+                status,
+            ]
+        )
+
+    # --------------------------------------------------------
+    # Create DataFrame
+    # --------------------------------------------------------
+
+    appointments = pd.DataFrame(
+        rows,
+        columns=[
+            "appointment_id",
+            "patient_id",
+            "doctor_id",
+            "department",
+            "scheduled_time",
+            "checkin_time",
+            "consultation_start_time",
+            "status",
+        ],
+    )
+
+    # ========================================================
+    # INTENTIONAL DATA-QUALITY PROBLEMS
+    # ========================================================
+
+    # --------------------------------------------------------
+    # 1. Unknown patient IDs
+    # --------------------------------------------------------
+    #
+    # These patients don't exist in patients.csv.
+    #
+    # This will later test referential integrity.
+    # --------------------------------------------------------
+
+    unknown_patient_indices = RNG.choice(
+        len(appointments),
+        size=5,
+        replace=False,
+    )
+
+    appointments.loc[
+        unknown_patient_indices,
+        "patient_id",
+    ] = "P9999"
+
+    # --------------------------------------------------------
+    # 2. Invalid timestamps
+    # --------------------------------------------------------
+    #
+    # consultation_start_time occurs before check-in.
+    #
+    # This creates a negative waiting time.
+    # --------------------------------------------------------
+
+    completed_indices = appointments.index[
+        appointments["status"] == "Completed"
+    ]
+
+    invalid_time_indices = RNG.choice(
+        completed_indices,
+        size=8,
+        replace=False,
+    )
+
+    appointments.loc[
+        invalid_time_indices,
+        "consultation_start_time",
+    ] = (
+        appointments.loc[
+            invalid_time_indices,
+            "checkin_time",
+        ]
+        - pd.Timedelta(
+            minutes=30
+        )
+    )
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
+    output_path = SOURCE_FILES[
+        "appointments"
+    ]
+
+    appointments.to_csv(
+        output_path,
+        index=False,
+    )
+
+    return appointments
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 def main() -> None:
     """
-    Generate the patient-registration source dataset.
+    Generate all currently implemented synthetic
+    hospital source datasets.
     """
+
+    print("=" * 60)
+    print("HOSPITAL SOURCE DATA GENERATION")
+    print("=" * 60)
+
+    # --------------------------------------------------------
+    # Generate patients
+    # --------------------------------------------------------
 
     patients = generate_patients()
 
-    print("=" * 60)
-    print("PATIENT DATA GENERATION")
-    print("=" * 60)
+    print()
+    print("PATIENT REGISTRATION")
+    print("-" * 60)
 
     print(
-        f"Generated rows      : {len(patients)}"
+        f"Rows               : {len(patients)}"
     )
 
     print(
-        f"Unique patient IDs  : {patients['patient_id'].nunique()}"
+        f"Unique patients    : "
+        f"{patients['patient_id'].nunique()}"
     )
 
     print(
-        f"Duplicate rows      : "
+        f"Duplicate rows     : "
         f"{patients['patient_id'].duplicated().sum()}"
     )
 
-    print(
-        f"Missing cities      : "
-        f"{patients['city'].isna().sum()}"
-    )
+    # --------------------------------------------------------
+    # Generate appointments
+    # --------------------------------------------------------
 
-    print(
-        f"Missing blood groups: "
-        f"{patients['blood_group'].isna().sum()}"
-    )
-
-    print(
-        f"Missing conditions  : "
-        f"{patients['chronic_condition'].isna().sum()}"
+    appointments = generate_appointments(
+        patients
     )
 
     print()
+    print("APPOINTMENT SYSTEM")
+    print("-" * 60)
+
     print(
-        f"Saved to: {SOURCE_FILES['patients']}"
+        f"Appointments       : {len(appointments)}"
+    )
+
+    print(
+        f"Completed          : "
+        f"{(appointments['status'] == 'Completed').sum()}"
+    )
+
+    print(
+        f"No-Show            : "
+        f"{(appointments['status'] == 'No-Show').sum()}"
+    )
+
+    print(
+        f"Cancelled          : "
+        f"{(appointments['status'] == 'Cancelled').sum()}"
+    )
+
+    print(
+        f"Unknown patients   : "
+        f"{(~appointments['patient_id'].isin(
+            patients['patient_id']
+        )).sum()}"
+    )
+
+    # --------------------------------------------------------
+    # Calculate intentionally invalid waiting records
+    # --------------------------------------------------------
+
+    completed = appointments[
+        appointments["status"] == "Completed"
+    ].copy()
+
+    waiting_minutes = (
+        completed["consultation_start_time"]
+        - completed["checkin_time"]
+    ).dt.total_seconds() / 60
+
+    print(
+        f"Negative waits     : "
+        f"{(waiting_minutes < 0).sum()}"
     )
 
     print()
-    print("First 10 raw records:")
+    print("Generated files:")
     print(
-        patients.head(10).to_string(
-            index=False
-        )
+        f"  patients      → "
+        f"{SOURCE_FILES['patients']}"
+    )
+    print(
+        f"  appointments  → "
+        f"{SOURCE_FILES['appointments']}"
     )
 
 
