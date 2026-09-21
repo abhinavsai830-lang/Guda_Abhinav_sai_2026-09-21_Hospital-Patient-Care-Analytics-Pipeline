@@ -741,3 +741,178 @@ def transform_wearables(
     )
 
     return df
+
+# ============================================================
+# DOCTOR NOTE TRANSFORMATION
+# ============================================================
+
+def extract_note_symptoms(
+    text: str,
+    symptom_keywords: list[str],
+) -> list[str]:
+    """
+    Extract known symptom keywords from a consultation note.
+
+    Matching is case-insensitive.
+
+    Parameters
+    ----------
+    text:
+        Cleaned consultation-note text.
+
+    symptom_keywords:
+        List of symptoms to search for.
+
+    Returns
+    -------
+    list[str]
+        Symptoms found in the note.
+    """
+
+    text_lower = text.lower()
+
+    found = []
+
+    for symptom in symptom_keywords:
+
+        if symptom.lower() in text_lower:
+            found.append(symptom)
+
+    return found
+
+
+def transform_doctor_notes(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Clean and transform doctor consultation notes.
+
+    Transformations:
+        1. Remove notes with missing text
+        2. Normalize note text
+        3. Convert visit date
+        4. Extract symptom keywords
+        5. Count symptoms
+        6. Identify critical symptoms
+        7. Create critical-symptom flag
+    """
+
+    from config import (
+        SYMPTOM_KEYWORDS,
+        CRITICAL_SYMPTOMS,
+    )
+
+    logger.info(
+        "Starting doctor-note transformation"
+    )
+
+    df = df.copy()
+
+    before_rows = len(df)
+
+    # ========================================================
+    # 1. Remove rows without note text
+    # ========================================================
+
+    df = df.dropna(
+        subset=["note_text"]
+    ).copy()
+
+    df = df[
+        df["note_text"]
+        .astype(str)
+        .str.strip()
+        .ne("")
+    ].copy()
+
+    removed_empty_notes = (
+        before_rows - len(df)
+    )
+
+    logger.info(
+        "Removed %d empty doctor notes",
+        removed_empty_notes,
+    )
+
+    # ========================================================
+    # 2. Clean the note text
+    # ========================================================
+
+    df["clean_note_text"] = (
+        df["note_text"]
+        .astype("string")
+        .str.strip()
+        .str.lower()
+    )
+
+    # ========================================================
+    # 3. Convert visit date
+    # ========================================================
+
+    df["visit_date"] = pd.to_datetime(
+        df["visit_date"],
+        errors="coerce",
+    )
+
+    # ========================================================
+    # 4. Extract symptoms
+    # ========================================================
+
+    df["symptoms_found"] = (
+        df["clean_note_text"]
+        .apply(
+            lambda text:
+                extract_note_symptoms(
+                    text,
+                    SYMPTOM_KEYWORDS,
+                )
+        )
+    )
+
+    # ========================================================
+    # 5. Count symptoms
+    # ========================================================
+
+    df["symptom_count"] = (
+        df["symptoms_found"]
+        .apply(len)
+    )
+
+    # ========================================================
+    # 6. Extract critical symptoms
+    # ========================================================
+
+    df["critical_symptoms_found"] = (
+        df["clean_note_text"]
+        .apply(
+            lambda text:
+                extract_note_symptoms(
+                    text,
+                    CRITICAL_SYMPTOMS,
+                )
+        )
+    )
+
+    # ========================================================
+    # 7. Count critical symptoms
+    # ========================================================
+
+    df["critical_symptom_count"] = (
+        df["critical_symptoms_found"]
+        .apply(len)
+    )
+
+    # ========================================================
+    # 8. Create critical-symptom flag
+    # ========================================================
+
+    df["has_critical_symptom"] = (
+        df["critical_symptom_count"] > 0
+    ).astype(int)
+
+    logger.info(
+        "Doctor-note transformation completed: %d rows",
+        len(df),
+    )
+
+    return df

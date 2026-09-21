@@ -96,3 +96,56 @@ LAB_REFERENCE_RANGES = {
         "unit": "10^3/uL",
     },
 }
+# ============================================================
+# WEARABLE VALIDATION RULES
+# ============================================================
+
+VALID_VITAL_RANGES = {
+    "heart_rate": {
+        "low": 30,
+        "high": 220,
+    },
+    "spo2": {
+        "low": 50,
+        "high": 100,
+    },
+    "body_temp": {
+        "low": 34.0,
+        "high": 43.0,
+    },
+}
+
+
+# ============================================================
+# WEARABLE ABNORMALITY THRESHOLDS
+# ============================================================
+
+ABNORMAL_VITALS = {
+    "heart_rate_high": 100,
+    "heart_rate_low": 50,
+    "spo2_low": 92,
+    "body_temp_high": 38.0,
+}
+
+# ============================================================
+# DOCTOR-NOTE SYMPTOM RULES
+# ============================================================
+
+SYMPTOM_KEYWORDS = [
+    "chest pain",
+    "shortness of breath",
+    "dizziness",
+    "fever",
+    "fatigue",
+    "headache",
+    "cough",
+    "palpitations",
+    "swelling",
+    "joint pain",
+]
+
+CRITICAL_SYMPTOMS = [
+    "chest pain",
+    "shortness of breath",
+    "palpitations",
+]
