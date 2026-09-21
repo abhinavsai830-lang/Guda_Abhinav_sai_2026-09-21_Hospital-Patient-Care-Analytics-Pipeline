@@ -956,6 +956,7 @@ def generate_lab_reports(
 # ============================================================
 
 def generate_wearables(
+    
     patients: pd.DataFrame,
 ) -> pd.DataFrame:
     """
@@ -1202,6 +1203,213 @@ def generate_wearables(
     )
 
     return wearables
+
+# ============================================================
+# DOCTOR CONSULTATION NOTES GENERATOR
+# ============================================================
+
+def generate_doctor_notes(
+    patients: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Generate synthetic doctor consultation notes.
+
+    The note text is intentionally unstructured because
+    consultation notes represent free-text clinical information.
+
+    Intentional source-data variations:
+    - different symptoms
+    - critical symptoms
+    - uppercase notes
+    """
+
+    common_symptoms = [
+        "fever",
+        "cough",
+        "headache",
+        "fatigue",
+        "joint pain",
+        "dizziness",
+        "swelling",
+    ]
+
+    critical_symptoms = [
+        "chest pain",
+        "shortness of breath",
+        "palpitations",
+    ]
+
+    templates = [
+        "Patient complains of {symptom1} and {symptom2}. "
+        "Advised rest and follow-up.",
+
+        "Presented with {symptom1} since 3 days. "
+        "{symptom2} also reported. Prescribed medication.",
+
+        "Routine check-up. Mild {symptom1}. "
+        "No other complaints.",
+
+        "Patient reports {symptom1}, {symptom2}. "
+        "Referred for further tests.",
+    ]
+
+    patients_unique = patients.drop_duplicates(
+        "patient_id"
+    )
+
+    rows = []
+
+    for i in range(1, 451):
+
+        # ----------------------------------------------------
+        # Select a patient
+        # ----------------------------------------------------
+
+        patient = patients_unique.iloc[
+            int(
+                RNG.integers(
+                    low=0,
+                    high=len(patients_unique),
+                )
+            )
+        ]
+
+        patient_id = patient["patient_id"]
+
+        chronic_condition = (
+            patient["chronic_condition"]
+            if pd.notna(
+                patient["chronic_condition"]
+            )
+            else "None"
+        )
+
+        # ----------------------------------------------------
+        # Patients with cardiac conditions have a higher
+        # probability of receiving a critical symptom.
+        # ----------------------------------------------------
+
+        is_cardiac_or_hypertension = (
+            chronic_condition
+            in {
+                "Heart Disease",
+                "Hypertension",
+            }
+        )
+
+        if is_cardiac_or_hypertension:
+
+            symptom_pool = (
+                critical_symptoms
+                + common_symptoms[:4]
+            )
+
+        else:
+
+            symptom_pool = common_symptoms
+
+        # ----------------------------------------------------
+        # Select two different symptoms
+        # ----------------------------------------------------
+
+        selected_symptoms = RNG.choice(
+            symptom_pool,
+            size=2,
+            replace=False,
+        )
+
+        symptom1 = selected_symptoms[0]
+        symptom2 = selected_symptoms[1]
+
+        # ----------------------------------------------------
+        # Generate the note
+        # ----------------------------------------------------
+
+        template = RNG.choice(
+            templates
+        )
+
+        note_text = template.format(
+            symptom1=symptom1,
+            symptom2=symptom2,
+        )
+
+        # ----------------------------------------------------
+        # Some doctors enter notes entirely in uppercase.
+        # ----------------------------------------------------
+
+        if RNG.random() < 0.10:
+            note_text = note_text.upper()
+
+        # ----------------------------------------------------
+        # Random doctor
+        # ----------------------------------------------------
+
+        all_doctors = [
+            doctor_id
+            for doctors in DEPARTMENTS.values()
+            for doctor_id in doctors
+        ]
+
+        doctor_id = RNG.choice(
+            all_doctors
+        )
+
+        # ----------------------------------------------------
+        # Random visit date
+        # ----------------------------------------------------
+
+        visit_date = (
+            START_DATE
+            + pd.Timedelta(
+                days=int(
+                    RNG.integers(
+                        low=0,
+                        high=45,
+                    )
+                )
+            )
+        )
+
+        rows.append(
+            [
+                f"N{i:04d}",
+                patient_id,
+                doctor_id,
+                visit_date.date(),
+                note_text,
+            ]
+        )
+
+    # --------------------------------------------------------
+    # Create DataFrame
+    # --------------------------------------------------------
+
+    doctor_notes = pd.DataFrame(
+        rows,
+        columns=[
+            "note_id",
+            "patient_id",
+            "doctor_id",
+            "visit_date",
+            "note_text",
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
+    output_path = SOURCE_FILES[
+        "doctor_notes"
+    ]
+
+    doctor_notes.to_csv(
+        output_path,
+        index=False,
+    )
+
+    return doctor_notes
 # ============================================================
 # MAIN
 # ============================================================
@@ -1366,6 +1574,57 @@ def main() -> None:
     print(
         f"Saved to           : "
         f"{SOURCE_FILES['wearables']}"
+    )
+        # --------------------------------------------------------
+    # Generate doctor consultation notes
+    # --------------------------------------------------------
+
+    doctor_notes = generate_doctor_notes(
+        patients
+    )
+
+    print()
+    print("DOCTOR CONSULTATION NOTES")
+    print("-" * 60)
+
+    print(
+        f"Notes generated     : "
+        f"{len(doctor_notes)}"
+    )
+
+    print(
+        f"Unique patients     : "
+        f"{doctor_notes['patient_id'].nunique()}"
+    )
+
+    critical_note_count = (
+        doctor_notes["note_text"]
+        .str.lower()
+        .str.contains(
+            "chest pain|shortness of breath|palpitations",
+            regex=True,
+        )
+        .sum()
+    )
+
+    print(
+        f"Critical symptom notes: "
+        f"{critical_note_count}"
+    )
+
+    uppercase_count = (
+        doctor_notes["note_text"]
+        == doctor_notes["note_text"].str.upper()
+    ).sum()
+
+    print(
+        f"Uppercase notes     : "
+        f"{uppercase_count}"
+    )
+
+    print(
+        f"Saved to            : "
+        f"{SOURCE_FILES['doctor_notes']}"
     )
     # --------------------------------------------------------
     # Calculate intentionally invalid waiting records
